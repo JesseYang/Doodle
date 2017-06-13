@@ -1,23 +1,24 @@
 import numpy as np
 import os
-import uuid
 import cv2
-import json
 from scipy import misc
-import uuid
-from numpy import unravel_index
 import pydensecrf.densecrf as dcrf
+from pydensecrf.utils import unary_from_labels, unary_from_softmax, create_pairwise_bilateral, create_pairwise_gaussian
 import pdb
 
 from tensorpack import *
 
+# import models
 from detect.train import Model as DetectModel
 from segment_sealion.train import Model as SegmentSealionModel
 from segment_fox.train import Model as SegmentFoxModel
 from bone_sealion.bone_point import Model as BoneSealionModel
 from bone_fox.bone_point import Model as BoneFoxModel
 
+# import configurations
 from detect.cfgs.config import cfg as detect_cfg
+from segment_sealion.cfgs.config import cfg as segment_sealion_cfg
+from segment_fox.cfgs.config import cfg as segment_fox_cfg
 from bone_sealion.cfgs.config import cfg as bone_sealion_cfg
 from bone_fox.cfgs.config import cfg as bone_fox_cfg
 
@@ -27,6 +28,7 @@ animals = ["sealion", "fox"]
 SegmentModels = [SegmentSealionModel, SegmentFoxModel]
 BoneModels = [BoneSealionModel, BoneFoxModel]
 bone_cfgs = [bone_sealion_cfg, bone_fox_cfg]
+segment_cfgs = [segment_sealion_cfg, segment_fox_cfg]
 
 def initialize(path_prefix):
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -67,17 +69,18 @@ def initialize(path_prefix):
     return [predict_func_detect, predict_funcs_segment, predict_funcs_bone]
 
 # input_img should be numpy array with RGB channels
-def predict(predict_funcs, animal_idx, input_img, crf, test=False, pad=False):
+def predict(predict_funcs, animal_idx, input_img, crf=True, test=False, pad=False):
 
     [detect_func, segment_funcs, bone_funcs] = predict_funcs
     segment_func = segment_funcs[animal_idx]
     bone_func = bone_funcs[animal_idx]
 
     bone_cfg = bone_cfgs[animal_idx]
+    segment_cfg = segment_cfgs[animal_idx]
 
     # detect
-    width_crop = 1
-    height_crop = 1
+    width_crop = 1.2
+    height_crop = 1.2
     ori_height, ori_width, _ = input_img.shape
     detect_input = cv2.resize(input_img, (detect_cfg.img_w, detect_cfg.img_h))
     detect_input = np.expand_dims(detect_input, axis=0)
@@ -102,7 +105,7 @@ def predict(predict_funcs, animal_idx, input_img, crf, test=False, pad=False):
         print("Maximum confidence lower then the threshold. Exit")
         return -1
 
-    [_, n, _, gh, gw] = unravel_index(klass_conf.argmax(), klass_conf.shape)
+    [_, n, _, gh, gw] = np.unravel_index(klass_conf.argmax(), klass_conf.shape)
     anchor = detect_cfg.anchors[n]
     w = pred_w[0, n, 0, gh, gw]
     h = pred_h[0, n, 0, gh, gw]
@@ -151,11 +154,15 @@ def predict(predict_funcs, animal_idx, input_img, crf, test=False, pad=False):
     if test: misc.imsave('output_images/segment_input.png', segment_input)
 
     (height, width, _) = segment_input.shape
-    segment_input = np.expand_dims(segment_input, axis=0)
-    predictions = segment_func([segment_input])[0]
+    batch_segment_input = np.expand_dims(segment_input, axis=0)
+    predictions = segment_func([batch_segment_input])[0]
+
+    class_num = predictions.shape[1]
+
+    predictions = np.reshape(predictions, (height, width, class_num))
 
     if crf == True:
-        d = dcrf.DenseCRF2D(height, width, cfg.class_num)
+        d = dcrf.DenseCRF2D(height, width, segment_cfg.class_num)
 
         # set unary potential
         predictions = np.transpose(predictions, (2, 0, 1))
@@ -167,7 +174,7 @@ def predict(predict_funcs, animal_idx, input_img, crf, test=False, pad=False):
         d.addPairwiseGaussian(sxy=(3, 3), compat=3, kernel=dcrf.DIAG_KERNEL,
                               normalization=dcrf.NORMALIZE_SYMMETRIC)
         # This adds the color-dependent term, i.e. features are (x,y,r,g,b).
-        d.addPairwiseBilateral(sxy=(8, 8), srgb=(13, 13, 13), rgbim=img,
+        d.addPairwiseBilateral(sxy=(8, 8), srgb=(13, 13, 13), rgbim=segment_input,
                                compat=10,
                                kernel=dcrf.DIAG_KERNEL,
                                normalization=dcrf.NORMALIZE_SYMMETRIC)
@@ -178,10 +185,10 @@ def predict(predict_funcs, animal_idx, input_img, crf, test=False, pad=False):
     else:
         result = np.argmax(predictions, axis=2)
 
-    output = np.zeros((height,width))
+    output = np.zeros((height, width))
     for h in range(height):
         for w in range(width):
-            output[h, w] = result[0, h, w]
+            output[h, w] = result[h, w]
     if test: misc.imsave("output_images/segment_output.png", output)
 
     # get bboxes from segment results
@@ -197,7 +204,7 @@ def predict(predict_funcs, animal_idx, input_img, crf, test=False, pad=False):
         bboxes.append([xmin, ymin, xmax, ymax])
 
     # bone
-    bone_input = cv2.cvtColor(segment_input[0], cv2.COLOR_RGB2BGR)
+    bone_input = cv2.cvtColor(segment_input, cv2.COLOR_RGB2BGR)
     bone_input = np.expand_dims(bone_input, axis=0)
 
     predictions = bone_func([bone_input])[0][0]
@@ -239,7 +246,7 @@ def predict(predict_funcs, animal_idx, input_img, crf, test=False, pad=False):
     final_output = np.copy(seg)
     for bone in bones:
         final_output = cv2.circle(final_output, (bone[0], bone[1]), 2, (255, 255, 255), thickness=2, lineType=8, shift=0)
-    if test: cv2.imwrite("output_images/bone_output.png", final_output)
+    if test: misc.imsave("output_images/bone_output.png", final_output)
     seg = seg.astype(int)
 
     # box: 4
@@ -258,15 +265,15 @@ if __name__ == '__main__':
 
     predict_funcs = initialize("./")
 
-    img = cv2.imread(args.input)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = misc.imread(args.input)
+    # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     # 0: sealion
     # 1: fox
     animals = ["sealion", "fox"]
     if args.animal in animals:
         animal_idx = animals.index(args.animal)
-        predict(predict_funcs, animal_idx, img, args.crf, test=True)
+        predict(predict_funcs, animal_idx, img, crf=args.crf, test=True)
     else:
         print("wrong animal")
 
