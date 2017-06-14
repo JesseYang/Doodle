@@ -12,23 +12,29 @@ from tensorpack import *
 from detect.train import Model as DetectModel
 from segment_sealion.train import Model as SegmentSealionModel
 from segment_fox.train import Model as SegmentFoxModel
+from segment_koala.train import Model as SegmentKoalaModel
 from bone_sealion.bone_point import Model as BoneSealionModel
 from bone_fox.bone_point import Model as BoneFoxModel
+from bone_koala.bone_point import Model as BoneKoalaModel
 
 # import configurations
 from detect.cfgs.config import cfg as detect_cfg
 from segment_sealion.cfgs.config import cfg as segment_sealion_cfg
 from segment_fox.cfgs.config import cfg as segment_fox_cfg
+from segment_koala.cfgs.config import cfg as segment_koala_cfg
 from bone_sealion.cfgs.config import cfg as bone_sealion_cfg
 from bone_fox.cfgs.config import cfg as bone_fox_cfg
+from bone_koala.cfgs.config import cfg as bone_koala_cfg
 
 from time import gmtime, strftime
 
-animals = ["sealion", "fox"]
-SegmentModels = [SegmentSealionModel, SegmentFoxModel]
-BoneModels = [BoneSealionModel, BoneFoxModel]
-bone_cfgs = [bone_sealion_cfg, bone_fox_cfg]
-segment_cfgs = [segment_sealion_cfg, segment_fox_cfg]
+animals = ["sealion", "fox", "koala"]
+
+SegmentModels = [SegmentSealionModel, SegmentFoxModel, SegmentKoalaModel]
+BoneModels = [BoneSealionModel, BoneFoxModel, BoneKoalaModel]
+
+segment_cfgs = [segment_sealion_cfg, segment_fox_cfg, segment_koala_cfg]
+bone_cfgs = [bone_sealion_cfg, bone_fox_cfg, bone_koala_cfg]
 
 def initialize(path_prefix):
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -415,7 +421,7 @@ if __name__ == '__main__':
     predict_funcs = initialize("./")
 
     img = cv2.imread(args.input)
-    animals = ["sealion", "fox"]
+    animals = ["sealion", "fox", "koala"]
     if args.animal in animals:
         animal_idx = animals.index(args.animal)
     else:
@@ -432,7 +438,7 @@ if __name__ == '__main__':
         # save detect result as image
         segment_input = cv2.resize(detect_output, (224, 224))
         cv2.imwrite("output_images/detect_output.png", segment_input)
-        bones, seg = segment_and_bone(predict_funcs, animal_idx, segment_input, crf=True)
+        bones, seg = segment_and_bone(predict_funcs, animal_idx, segment_input)
 
         # save segment and bone result as images
         misc.imsave("output_images/seg_output.png", seg)
