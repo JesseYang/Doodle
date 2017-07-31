@@ -37,7 +37,7 @@ segment_cfgs = [segment_sealion_cfg, segment_fox_cfg, segment_koala_cfg]
 bone_cfgs = [bone_sealion_cfg, bone_fox_cfg, bone_koala_cfg]
 
 def initialize(path_prefix):
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
     # initialize detection model
     detect_sess_init = SaverRestore(os.path.join(path_prefix, "models/detect"))
@@ -132,7 +132,7 @@ def detect(predict_funcs, input_img):
     xmax = np.min([xmax, float(detect_cfg.img_w)])
     ymax = np.min([ymax, float(detect_cfg.img_h)])
 
-    box = np.asarray([xmin, ymin, xmax, ymax])
+    box = np.asarray([int(xmin), int(ymin), int(xmax), int(ymax)])
     return box
 
 def segment_and_bone(predict_funcs, animal_idx, input_img, crf=True):
@@ -188,10 +188,11 @@ def segment_and_bone(predict_funcs, animal_idx, input_img, crf=True):
         cur_label_img = (seg == (label_idx + 1)).astype(int)
 
         t = np.nonzero(cur_label_img)
-        ymin = np.min(t[0])
-        ymax = np.max(t[0])
-        xmin = np.min(t[1])
-        xmax = np.max(t[1])
+        has_value = t[0].shape[0] > 0
+        ymin = np.min(t[0]) if has_value else 0
+        ymax = np.max(t[0]) if has_value else 1
+        xmin = np.min(t[1]) if has_value else 0
+        xmax = np.max(t[1]) if has_value else 1
         bboxes.append([xmin, ymin, xmax, ymax])
 
     # bone
@@ -398,8 +399,11 @@ def predict(predict_funcs, animal_idx, input_img, crf=True, test=False, pad=Fals
     bones = bones.astype(int)
 
     final_output = np.copy(seg)
+    max_val = np.max(seg)
+    bone_val = np.min([max_val * 2, 255])
     for bone in bones:
-        final_output = cv2.circle(final_output, (bone[0], bone[1]), 2, (255, 255, 255), thickness=2, lineType=8, shift=0)
+        final_output = cv2.circle(final_output, (bone[0], bone[1]), 2, (bone_val, bone_val, bone_val), thickness=2, lineType=8, shift=0)
+    final_output = final_output / bone_val
     if test: misc.imsave("output_images/bone_output.png", final_output)
     seg = seg.astype(int)
 
@@ -443,9 +447,12 @@ if __name__ == '__main__':
         # save segment and bone result as images
         misc.imsave("output_images/seg_output.png", seg)
         final_output = np.copy(seg)
+        max_val = np.max(seg)
+        bone_val = np.min([max_val * 2, 255])
         for bone in bones:
-            final_output = cv2.circle(final_output, (bone[0], bone[1]), 2, (255, 255, 255), thickness=2, lineType=8, shift=0)
-        cv2.imwrite("output_images/bone_output.png", final_output)
+            final_output = cv2.circle(final_output, (bone[0], bone[1]), 2, (bone_val, bone_val, bone_val), thickness=2, lineType=8, shift=0)
+        final_output = final_output / bone_val
+        misc.imsave("output_images/bone_output.png", final_output)
 
 
 
